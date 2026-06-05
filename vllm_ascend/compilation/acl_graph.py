@@ -18,6 +18,7 @@ from vllm.config import CUDAGraphMode, VllmConfig
 from vllm.forward_context import BatchDescriptor, get_forward_context
 from vllm.logger import logger
 from vllm.platforms import current_platform
+from vllm.v1.profiling.case01_trace import case01_log
 
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 
@@ -114,6 +115,13 @@ class ACLGraphWrapper:
             # matches. This enables properly dispatching to the correct
             # CUDAGraphWrapper when nesting multiple instances with different
             # runtime modes.
+            case01_log(
+                "aclgraph",
+                path="eager",
+                runtime_mode=aclgraph_runtime_mode.name,
+                wrapper_mode=self.runtime_mode.name,
+                batch_desc=str(batch_descriptor),
+            )
             return self.runnable(*args, **kwargs)
 
         if batch_descriptor not in self.concrete_aclgraph_entries:
@@ -178,6 +186,13 @@ class ACLGraphWrapper:
             # important: we need to return the output, rather than
             # the weak ref of the output, so that pytorch can correctly
             # manage the memory during acl graph capture
+            case01_log(
+                "aclgraph",
+                path="capture",
+                runtime_mode=aclgraph_runtime_mode.name,
+                wrapper_mode=self.runtime_mode.name,
+                batch_desc=str(entry.batch_descriptor),
+            )
             return output
 
         if self.is_debugging_mode:
@@ -204,6 +219,13 @@ class ACLGraphWrapper:
         )
         if self.runtime_mode != CUDAGraphMode.FULL or not _EXTRA_CTX.is_draft_model or not use_eagle:
             torch.npu.current_stream().synchronize()
+        case01_log(
+            "aclgraph",
+            path="replay",
+            runtime_mode=aclgraph_runtime_mode.name,
+            wrapper_mode=self.runtime_mode.name,
+            batch_desc=str(entry.batch_descriptor),
+        )
         entry.aclgraph.replay()
         return entry.output
 
