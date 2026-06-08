@@ -870,6 +870,26 @@ class NPUModelRunner(GPUModelRunner):
             max_num_reqs_across_dp = self.max_num_reqs * self.uniform_decode_query_len
             logits_indices = nn.functional.pad(logits_indices, (0, max_num_reqs_across_dp - logits_indices.shape[0]))
 
+        from vllm.v1.profiling.inference_trace import inference_trace
+
+        req_ids = self.input_batch.req_ids[:num_reqs]
+        input_ids_list = self.input_ids.cpu[:total_num_scheduled_tokens].tolist()
+        positions_list = self.positions.np[:total_num_scheduled_tokens].tolist()
+        inference_trace(
+            "prepare_inputs",
+            num_reqs=num_reqs,
+            total_tokens=total_num_scheduled_tokens,
+            per_req_tokens=num_scheduled_tokens.tolist(),
+            req_ids=req_ids,
+            input_ids=input_ids_list,
+            positions=positions_list,
+            num_computed_tokens=self.input_batch.num_computed_tokens_cpu[
+                :num_reqs
+            ].tolist(),
+            ascend_attn_state=self.attn_state.name if self.attn_state else "none",
+            with_prefill=self.with_prefill,
+        )
+
         return (
             logits_indices,
             spec_decode_metadata,
@@ -904,6 +924,19 @@ class NPUModelRunner(GPUModelRunner):
             self.attn_state = AscendAttentionState.ChunkedPrefill  # type: ignore
         else:
             self.attn_state = attn_state  # type: ignore
+
+        from vllm.v1.profiling.inference_trace import inference_trace
+
+        inference_trace(
+            "ascend_attn_state",
+            attn_state=attn_state.name,
+            num_reqs=num_reqs,
+            per_req_tokens=num_scheduled_tokens.tolist(),
+            per_req_valid_tokens=num_valid_tokens.tolist(),
+            num_computed_tokens=self.input_batch.num_computed_tokens_cpu[
+                :num_reqs
+            ].tolist(),
+        )
 
         return attn_state
 
@@ -1448,6 +1481,21 @@ class NPUModelRunner(GPUModelRunner):
                 assert broadcasted is not None
                 logits = broadcasted["logits"]
 
+            from vllm.v1.profiling.inference_trace import inference_trace
+
+            logits_shape = list(logits.shape) if logits is not None else None
+            inference_trace(
+                "forward",
+                num_reqs=num_reqs,
+                num_tokens_unpadded=num_tokens_unpadded,
+                num_tokens_padded=num_tokens_padded,
+                cudagraph_mode=cudagraph_mode.name,
+                logits_shape=logits_shape,
+                has_mm_embeds=inputs_embeds is not None,
+                use_input_ids=input_ids is not None,
+                ascend_attn_state=self.attn_state.name if self.attn_state else "none",
+            )
+
             # Apply structured output bitmasks if present
             self.execute_model_state = ExecuteModelState(
                 scheduler_output,
@@ -1560,6 +1608,15 @@ class NPUModelRunner(GPUModelRunner):
             scheduler_output.total_num_scheduled_tokens,
             spec_decode_metadata,
         )
+
+        from vllm.v1.profiling.inference_trace import inference_trace
+
+        for req_id, token_ids in zip(req_ids_output_copy, valid_sampled_token_ids):
+            inference_trace(
+                "sample",
+                request_id=req_id,
+                sampled_token_ids=token_ids,
+            )
 
         with record_function_or_nullcontext("draft_token"):
             if self.speculative_config:

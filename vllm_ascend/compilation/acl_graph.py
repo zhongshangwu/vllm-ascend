@@ -19,6 +19,7 @@ from vllm.forward_context import BatchDescriptor, get_forward_context
 from vllm.logger import logger
 from vllm.platforms import current_platform
 from vllm.v1.profiling.case01_trace import case01_log
+from vllm.v1.profiling.inference_trace import inference_trace
 
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX
 
@@ -122,6 +123,14 @@ class ACLGraphWrapper:
                 wrapper_mode=self.runtime_mode.name,
                 batch_desc=str(batch_descriptor),
             )
+            inference_trace(
+                "aclgraph",
+                path="eager",
+                runtime_mode=aclgraph_runtime_mode.name,
+                wrapper_mode=self.runtime_mode.name,
+                batch_desc=str(batch_descriptor),
+                note="no_graph_replay_forward_in_python",
+            )
             return self.runnable(*args, **kwargs)
 
         if batch_descriptor not in self.concrete_aclgraph_entries:
@@ -193,6 +202,14 @@ class ACLGraphWrapper:
                 wrapper_mode=self.runtime_mode.name,
                 batch_desc=str(entry.batch_descriptor),
             )
+            inference_trace(
+                "aclgraph",
+                path="capture",
+                runtime_mode=aclgraph_runtime_mode.name,
+                wrapper_mode=self.runtime_mode.name,
+                batch_desc=str(entry.batch_descriptor),
+                note="first_time_record_npu_graph_for_this_batch_shape",
+            )
             return output
 
         if self.is_debugging_mode:
@@ -225,6 +242,14 @@ class ACLGraphWrapper:
             runtime_mode=aclgraph_runtime_mode.name,
             wrapper_mode=self.runtime_mode.name,
             batch_desc=str(entry.batch_descriptor),
+        )
+        inference_trace(
+            "aclgraph",
+            path="replay",
+            runtime_mode=aclgraph_runtime_mode.name,
+            wrapper_mode=self.runtime_mode.name,
+            batch_desc=str(entry.batch_descriptor),
+            note="reuse_cached_npu_graph_low_host_overhead",
         )
         entry.aclgraph.replay()
         return entry.output
